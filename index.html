@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>BREACH — un metroidvania de hacking</title>
+<style>
+  :root { --neon:#3DFFA2; --red:#ff3b5c; --bg:#050607; --panel:#0b1012; --ink:#e8f0ec; --muted:#7f8c87; }
+  * { box-sizing:border-box; margin:0; padding:0; }
+  html,body { height:100%; background:var(--bg); color:var(--ink); font-family:ui-monospace,"JetBrains Mono",Consolas,monospace; overflow:hidden; }
+  #wrap { position:relative; width:100vw; height:100vh; display:flex; align-items:center; justify-content:center; }
+  canvas { image-rendering:pixelated; background:#000; box-shadow:0 0 60px -20px var(--neon); max-width:100vw; max-height:100vh; }
+  .overlay { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; background:rgba(0,0,0,.72); }
+  .hidden { display:none !important; }
+  .win { width:min(640px,92vw); background:var(--panel); border:1px solid rgba(61,255,162,.35); border-radius:10px; box-shadow:0 0 40px -10px var(--neon); overflow:hidden; }
+  .bar { display:flex; gap:7px; align-items:center; padding:9px 12px; background:#0f1719; border-bottom:1px solid rgba(255,255,255,.06); font-size:12px; color:var(--muted); }
+  .bar i { width:11px; height:11px; border-radius:50%; background:#3a4643; display:inline-block; }
+  .bar i:first-child { background:var(--red); }
+  .body { padding:18px 20px 20px; }
+  h2 { font-size:16px; color:var(--neon); margin-bottom:10px; letter-spacing:.04em; }
+  pre { white-space:pre-wrap; font:inherit; font-size:14px; line-height:1.55; color:var(--ink); }
+  #sqlPreview { margin-top:10px; padding:8px 10px; border-radius:6px; background:#060a0b; font-size:13px; color:#ffcf6b; word-break:break-all; }
+  form { display:flex; gap:8px; align-items:center; margin-top:14px; padding:8px 10px; border:1px solid rgba(61,255,162,.25); border-radius:6px; background:#060a0b; }
+  form span { color:var(--neon); }
+  input { flex:1; background:transparent; border:0; outline:0; color:var(--ink); font:inherit; font-size:15px; }
+  #tMsg { min-height:22px; margin-top:12px; font-size:14px; line-height:1.5; }
+  #tMsg.ok { color:var(--neon); } #tMsg.ko { color:var(--red); }
+  .btns { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+  button { font:inherit; font-size:13px; padding:7px 12px; border-radius:6px; border:1px solid rgba(255,255,255,.12); background:#121a1c; color:var(--ink); cursor:pointer; }
+  button:hover { border-color:var(--neon); }
+  button.primary { background:var(--neon); color:#04120B; border:0; font-weight:700; }
+  .center { text-align:center; }
+  .title { font-size:44px; letter-spacing:.2em; color:var(--neon); text-shadow:0 0 18px var(--neon); margin-bottom:8px; }
+  .keys { display:grid; grid-template-columns:auto 1fr; gap:4px 14px; font-size:13px; margin:14px 0; text-align:left; }
+  .keys b { color:var(--neon); font-weight:600; }
+  .muted { color:var(--muted); font-size:13px; line-height:1.6; }
+</style>
+</head>
+<body>
+<div id="wrap">
+  <canvas id="game" width="960" height="576" aria-label="Zone de jeu BREACH"></canvas>
+
+  <!-- Écran titre -->
+  <div class="overlay" id="intro">
+    <div class="win"><div class="bar"><i></i><i></i><i></i>&nbsp; nullcorp://intranet</div>
+      <div class="body center">
+        <div class="title">BREACH</div>
+        <p class="muted">Tu es infiltré dans le réseau de <b>NULLCORP</b>. Pirate les terminaux pour débloquer de nouvelles capacités, franchis le pare-feu et récupère le flag root.</p>
+        <div class="keys">
+          <b>← → / A D</b><span>se déplacer</span>
+          <b>Espace / ↑ / W</b><span>sauter</span>
+          <b>Maj / X</b><span>dash (à débloquer)</span>
+          <b>E / Entrée</b><span>pirater un terminal</span>
+        </div>
+        <p class="muted">Chaque terminal est un vrai mini-défi de sécurité. Les drones et les pics te renvoient au dernier point de sauvegarde.</p>
+        <div class="btns" style="justify-content:center;margin-top:16px"><button class="primary" id="startBtn">Lancer l'intrusion (Entrée)</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Terminal de piratage -->
+  <div class="overlay hidden" id="term">
+    <div class="win"><div class="bar"><i></i><i></i><i></i>&nbsp;<span id="tBar">terminal</span></div>
+      <div class="body">
+        <h2 id="tTitle"></h2>
+        <pre id="tText"></pre>
+        <div id="sqlPreview" class="hidden"></div>
+        <form id="tForm" autocomplete="off"><span>$</span><input id="tInput" spellcheck="false" aria-label="Réponse"></form>
+        <div id="tMsg"></div>
+        <div class="btns"><button type="button" id="hintBtn">Indice</button><button type="button" id="closeBtn">Fermer (Échap)</button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Victoire -->
+  <div class="overlay hidden" id="winScreen">
+    <div class="win"><div class="bar"><i></i><i></i><i></i>&nbsp; root@nullcorp</div>
+      <div class="body center">
+        <div class="title" style="font-size:32px">ACCÈS ROOT</div>
+        <pre id="winText" class="center"></pre>
+        <div class="btns" style="justify-content:center;margin-top:16px"><button class="primary" id="againBtn">Rejouer</button></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+"use strict";
+/* =====================================================================
+   CŒUR DU JEU (sans DOM) — testable dans Node
+   ===================================================================== */
+const TILE = 32, W = 96, H = 18;
+const PHYS = {
+  G: 0.55, MAX_FALL: 14, RUN: 4,
+  JUMP: 11, JUMP2: 10, JUMP_CUT: 4, COYOTE: 6,
+  DASH_SPEED: 12, DASH_FRAMES: 14, DASH_COOLDOWN: 35,
+};
+const PW = 20, PH = 28;
+
+/* Le niveau est construit par code pour rester lisible et facile à modifier. */
+function buildLevel() {
+  const g = Array.from({ length: H }, () => Array(W).fill("."));
+  const fill = (x0, y0, x1, y1, c) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) g[y][x] = c; };
+
+  fill(0, 0, W - 1, 1, "#");          // plafond
+  fill(0, 0, 0, H - 1, "#");          // mur gauche
+  fill(W - 1, 0, W - 1, H - 1, "#");  // mur droit
+  fill(0, 16, W - 1, 17, "#");        // sol
+
+  // Zone A — départ + entraînement
+  fill(8, 13, 10, 13, "#");
+  fill(13, 11, 15, 11, "#");
+  // Zone B — fossé de 8 cases : impossible sans DASH
+  fill(22, 16, 29, 17, ".");
+  fill(22, 17, 29, 17, "^");
+  // Zone D — bloc de 5 cases de haut : impossible sans DOUBLE SAUT
+  fill(47, 11, 62, 15, "#");
+  // Zone F — pare-feu : infranchissable sans BREACH
+  fill(68, 2, 68, 15, "F");
+  // Zone G — salle finale
+  fill(74, 15, 76, 15, "^");
+  fill(79, 12, 81, 12, "#");
+
+  const level = {
+    grid: g,
+    start: { x: 3 * TILE, y: 15 * TILE + (TILE - PH) },
+    terminals: [
+      { id: 1, tx: 18, ty: 15 },
+      { id: 2, tx: 44, ty: 15 },
+      { id: 3, tx: 61, ty: 10 },
+      { id: 4, tx: 88, ty: 15 },
+    ],
+    checkpoints: [
+      { tx: 32, ty: 15 },
+      { tx: 48, ty: 10 },
+      { tx: 70, ty: 15 },
+    ],
+    drones: [
+      { x0: 35 * TILE, x1: 42 * TILE, y: 15 * TILE + 6 },
+      { x0: 51 * TILE, x1: 58 * TILE, y: 10 * TILE + 6 },
+      { x0: 82 * TILE, x1: 86 * TILE, y: 15 * TILE + 6 },
+    ],
+  };
+  return level;
+}
+
+function newState(level) {
+  return {
+    level,
+    abilities: { dash: false, double: false, breach: false },
+    solved: {},
+    p: { x: level.start.x, y: level.start.y, vx: 0, vy: 0, onGround: false, coyote: 0,
+         jumps: 0, dashT: 0, dashCd: 0, airDash: false, facing: 1 },
+    checkpoint: { x: level.start.x, y: level.start.y },
+    drones: level.drones.map(d => ({ ...d, x: d.x0, dir: 1 })),
+    deaths: 0, frames: 0, won: false, flash: 0, particles: [],
+  };
+}
+
+function tileAt(s, tx, ty) {
+  if (tx < 0 || tx >= W) return "#";
+  if (ty < 0) return "#";
+  if (ty >= H) return ".";
+  return s.level.grid[ty][tx];
+}
+function isSolid(s, tx, ty) {
+  const t = tileAt(s, tx, ty);
+  return t === "#" || (t === "F" && !s.abilities.breach);
+}
+function overlapsSolid(s, x, y, w, h) {
+  for (let ty = Math.floor(y / TILE); ty <= Math.floor((y + h - 1) / TILE); ty++)
+    for (let tx = Math.floor(x / TILE); tx <= Math.floor((x + w - 1) / TILE); tx++)
+      if (isSolid(s, tx, ty)) return true;
+  return false;
+}
+function touchesSpikes(s, p) {
+  // Hitbox réduite à la moitié basse de la case : plus juste pour le joueur.
+  for (let ty = Math.floor(p.y / TILE); ty <= Math.floor((p.y + PH - 1) / TILE); ty++)
+    for (let tx = Math.floor(p.x / TILE); tx <= Math.floor((p.x + PW - 1) / TILE); tx++)
+      if (tileAt(s, tx, ty) === "^" && p.y + PH > ty * TILE + TILE / 2) return true;
+  return false;
+}
+
+function die(s) {
+  s.deaths++; s.flash = 18;
+  Object.assign(s.p, { x: s.checkpoint.x, y: s.checkpoint.y, vx: 0, vy: 0, dashT: 0, jumps: 0 });
+}
+
+/* input = { left, right, jump, jumpHeld, dash } (jump/dash = appui sur cette frame) */
+function step(s, input) {
+  const p = s.p, P = PHYS;
+  s.frames++;
+  if (s.flash > 0) s.flash--;
+  if (p.dashCd > 0) p.dashCd--;
+
+  const dir = (input.right ? 1 : 0) - (input.left ? 1 : 0);
+  if (dir) p.facing = dir;
+
+  if (input.dash && s.abilities.dash && p.dashCd === 0 && p.dashT === 0 && (p.onGround || !p.airDash)) {
+    p.dashT = P.DASH_FRAMES; p.dashCd = P.DASH_COOLDOWN;
+    if (!p.onGround) p.airDash = true;
+    burst(s, p.x + PW / 2, p.y + PH / 2, "#3DFFA2", 10);
+  }
+
+  if (p.dashT > 0) {
+    p.dashT--; p.vx = p.facing * P.DASH_SPEED; p.vy = 0;
+  } else {
+    p.vx = dir * P.RUN;
+    p.vy = Math.min(p.vy + P.G, P.MAX_FALL);
+    if (input.jump) {
+      if (p.onGround || p.coyote > 0) {
+        p.vy = -P.JUMP; p.jumps = 1; p.coyote = 0;
+      } else if (s.abilities.double && p.jumps < 2) {
+        p.vy = -P.JUMP2; p.jumps = 2;
+        burst(s, p.x + PW / 2, p.y + PH, "#7fd7ff", 8);
+      }
+    }
+    if (!input.jumpHeld && p.vy < -P.JUMP_CUT) p.vy = -P.JUMP_CUT; // saut variable
+  }
+
+  // Déplacement horizontal puis vertical, pixel par pixel (pas de traversée de mur)
+  moveAxis(s, "x", p.vx);
+  const wasGround = p.onGround;
+  p.onGround = false;
+  const falling = p.vy > 0;
+  if (!moveAxis(s, "y", p.vy) && falling) { p.onGround = true; }
+  if (p.onGround) { p.jumps = 0; p.airDash = false; p.coyote = P.COYOTE; }
+  else if (wasGround && p.vy >= 0) { p.coyote = P.COYOTE; }
+  else if (p.coyote > 0) p.coyote--;
+
+  // Dangers
+  if (touchesSpikes(s, p) || p.y > H * TILE) { die(s); return; }
+  for (const d of s.drones) {
+    d.x += d.dir * 1.6;
+    if (d.x <= d.x0 || d.x >= d.x1) d.dir *= -1;
+    const dy = d.y + Math.sin((s.frames + d.x0) / 20) * 6;
+    if (p.x < d.x + 24 && p.x + PW > d.x && p.y < dy + 18 && p.y + PH > dy) { die(s); return; }
+  }
+  // Points de sauvegarde
+  for (const c of s.level.checkpoints) {
+    const cx = c.tx * TILE, cy = c.ty * TILE;
+    if (p.x + PW > cx && p.x < cx + TILE && p.y + PH > cy && p.y < cy + TILE) {
+      s.checkpoint = { x: cx + (TILE - PW) / 2, y: cy + (TILE - PH) };
+      c.active = true;
+    }
+  }
+  // Particules
+  s.particles = s.particles.filter(q => (q.life -= 1) > 0);
+  for (const q of s.particles) { q.x += q.vx; q.y += q.vy; q.vy += 0.15; }
+}
+
+/* Renvoie false si un mur a stoppé le mouvement. */
+function moveAxis(s, axis, v) {
+  const p = s.p;
+  const sign = Math.sign(v);
+  let remaining = Math.abs(v);
+  while (remaining > 0) {
+    const d = Math.min(1, remaining) * sign;
+    const nx = axis === "x" ? p.x + d : p.x, ny = axis === "y" ? p.y + d : p.y;
+    if (overlapsSolid(s, nx, ny, PW, PH)) {
+      if (axis === "x") { p.vx = 0; if (p.dashT) p.dashT = 0; } else p.vy = 0;
+      return false;
+    }
+    p.x = nx; p.y = ny; remaining -= 1;
+  }
+  return true;
+}
+
+function nearTerminal(s) {
+  const p = s.p;
+  return s.level.terminals.find(t => {
+    const tx = t.tx * TILE, ty = t.ty * TILE;
+    return p.x + PW > tx - 10 && p.x < tx + TILE + 10 && p.y + PH > ty && p.y < ty + TILE;
+  });
+}
+
+function burst(s, x, y, color, n) {
+  for (let i = 0; i < n; i++)
+    s.particles.push({ x, y, vx: (Math.random() - .5) * 4, vy: (Math.random() - 1) * 3, life: 20 + Math.random() * 15, color });
+}
+
+/* ---------------- Défis de sécurité ---------------- */
+const norm = a => a.trim().toUpperCase().replace(/\s+/g, " ");
+
+function sqlQuery(user) {
+  return `SELECT * FROM users WHERE user='${user}' AND pass='••••••'`;
+}
+function sqliWorks(user) {
+  // Fin de chaîne + commentaire :  admin'--   admin'#   '/*
+  if (/'\s*(--|#|\/\*)/.test(user)) return true;
+  // Tautologie :  ' OR 1=1 --   ' or 'a'='a
+  if (/'\s*or\s+'?(\w+)'?\s*=\s*'?\1\b/i.test(user)) return true;
+  return false;
+}
+
+const PUZZLES = {
+  1: {
+    title: "Chiffre de César", ability: "dash", reward: "DASH — touche Maj ou X",
+    text: "Message intercepté, chiffré avec un décalage de 3 lettres (A→D, B→E, C→F…).\n\nDéchiffre le mot de passe :   GDVK",
+    check: a => norm(a) === "DASH",
+    hint: "Recule chaque lettre de 3 positions dans l'alphabet : G→D, D→A…",
+    lesson: "Le chiffre de César n'offre aucune sécurité : il n'existe que 25 décalages possibles, on les teste tous en une seconde.",
+  },
+  2: {
+    title: "Base64", ability: "double", reward: "DOUBLE SAUT — saute à nouveau en l'air",
+    text: "Ce jeton a été trouvé dans un cookie de session :\n\n   U0FVVA==\n\nDécode-le.",
+    check: a => norm(a) === "SAUT",
+    hint: "Base64 n'est pas du chiffrement : n'importe quel outil le décode (atob() en JavaScript, base64 -d sous Linux). Ici : 4 lettres en majuscules.",
+    lesson: "Encoder n'est pas chiffrer. Un secret « caché » en Base64 est un secret en clair.",
+  },
+  3: {
+    title: "Injection SQL", ability: "breach", reward: "BREACH — tu traverses le pare-feu rouge",
+    sqli: true,
+    text: "Console d'administration du pare-feu. Le serveur colle ton nom d'utilisateur\ndirectement dans sa requête SQL. Connecte-toi SANS connaître le mot de passe.\n\nEntre un nom d'utilisateur :",
+    check: sqliWorks,
+    hint: "Ferme la chaîne avec une apostrophe, puis neutralise la suite : un commentaire SQL ( -- ) ou une condition toujours vraie ( OR 1=1 ).",
+    lesson: "Ne jamais construire une requête par concaténation : utilise des requêtes préparées (paramètres), qui séparent le code SQL des données.",
+  },
+  4: {
+    title: "Reconnaissance", final: true, reward: "",
+    text: "Le serveur web expose son fichier /robots.txt :\n\n   User-agent: *\n   Disallow: /images/\n   Disallow: /s3cr3t-admin/\n   Disallow: /tmp/\n\nQuel chemin mène au panneau d'administration ?",
+    check: a => /^\/?s3cr3t-admin\/?$/i.test(a.trim()),
+    hint: "robots.txt dit aux moteurs de recherche ce qu'ils ne doivent pas indexer… et le dit aussi aux attaquants.",
+    lesson: "robots.txt est public. Y lister un chemin sensible revient à l'annoncer : protège-le par une authentification.",
+  },
+};
+
+function solve(s, id) {
+  const pz = PUZZLES[id];
+  s.solved[id] = true;
+  if (pz.ability) s.abilities[pz.ability] = true;
+  if (pz.final) s.won = true;
+}
+
+if (typeof module !== "undefined") {
+  module.exports = { TILE, W, H, PHYS, PW, PH, buildLevel, newState, step, solve, isSolid, sqliWorks, PUZZLES, nearTerminal };
+}
+
+/* =====================================================================
+   NAVIGATEUR : rendu, clavier, terminaux
+   ===================================================================== */
+if (typeof document !== "undefined") {
+  const cv = document.getElementById("game");
+  const ctx = cv.getContext("2d");
+  const $ = id => document.getElementById(id);
+  let S = newState(buildLevel());
+  let mode = "intro";          // intro | play | term | win
+  let current = null;           // terminal ouvert
+  let toast = null;             // { text, t }
+
+  // Fond : colonnes de chiffres binaires (pré-calculées)
+  const rain = Array.from({ length: 140 }, () => ({
+    x: Math.random() * W * TILE, y: Math.random() * H * TILE, c: Math.random() < .5 ? "0" : "1", a: .04 + Math.random() * .08,
+  }));
+
+  // ---------- clavier ----------
+  const held = {}, pressed = {};
+  const K = { left: ["ArrowLeft", "KeyA", "KeyQ"], right: ["ArrowRight", "KeyD"], jump: ["Space", "ArrowUp", "KeyW", "KeyZ"], dash: ["ShiftLeft", "ShiftRight", "KeyX"], use: ["KeyE", "Enter"] };
+  const any = (list, map) => list.some(k => map[k]);
+  addEventListener("keydown", e => {
+    if (mode === "intro" && e.code === "Enter") { start(); e.preventDefault(); return; }
+    if (mode === "win" && e.code === "Enter") { restart(); e.preventDefault(); return; }
+    if (mode === "term") { if (e.code === "Escape") closeTerm(); return; }
+    if (!held[e.code]) pressed[e.code] = true;
+    held[e.code] = true;
+    if (["Space", "ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.code)) e.preventDefault();
+  });
+  addEventListener("keyup", e => { held[e.code] = false; });
+  addEventListener("blur", () => { for (const k in held) held[k] = false; });
+
+  $("startBtn").onclick = start;
+  $("againBtn").onclick = restart;
+  $("closeBtn").onclick = closeTerm;
+  $("hintBtn").onclick = () => { if (current) msg(PUZZLES[current.id].hint, ""); $("tInput").focus(); };
+
+  function start() { $("intro").classList.add("hidden"); mode = "play"; cv.focus(); }
+  function restart() { S = newState(buildLevel()); $("winScreen").classList.add("hidden"); mode = "play"; }
+
+  // ---------- terminal ----------
+  function openTerm(t) {
+    current = t; mode = "term";
+    const pz = PUZZLES[t.id];
+    $("tBar").textContent = `nullcorp://node-0${t.id}`;
+    $("tTitle").textContent = `[${t.id}/4] ${pz.title}`;
+    $("tText").textContent = pz.text;
+    $("sqlPreview").classList.toggle("hidden", !pz.sqli);
+    $("tInput").value = ""; msg("", "");
+    if (pz.sqli) $("sqlPreview").textContent = sqlQuery("");
+    for (const k in held) held[k] = false;
+    $("term").classList.remove("hidden");
+    setTimeout(() => $("tInput").focus(), 0);
+  }
+  function closeTerm() {
+    $("term").classList.add("hidden"); mode = S.won ? "win" : "play"; current = null;
+    if (S.won) showWin();
+  }
+  function msg(text, cls) { const m = $("tMsg"); m.textContent = text; m.className = cls; }
+  $("tInput").addEventListener("input", () => {
+    if (current && PUZZLES[current.id].sqli) $("sqlPreview").textContent = sqlQuery($("tInput").value);
+  });
+  $("tForm").addEventListener("submit", e => {
+    e.preventDefault();
+    if (!current) return;
+    const pz = PUZZLES[current.id];
+    if (S.solved[current.id]) { closeTerm(); return; }
+    if (pz.check($("tInput").value)) {
+      solve(S, current.id);
+      msg(`ACCÈS ACCORDÉ. ${pz.reward ? "Nouvelle capacité : " + pz.reward + ". " : ""}\n${pz.lesson}\n(Entrée pour continuer)`, "ok");
+      if (pz.reward) toast = { text: pz.reward, t: 240 };
+      burst(S, current.tx * TILE + 16, current.ty * TILE, "#3DFFA2", 30);
+    } else {
+      msg("ACCÈS REFUSÉ. Réessaie ou demande un indice.", "ko");
+    }
+  });
+
+  function showWin() {
+    const secs = Math.round(S.frames / 60);
+    $("winText").textContent =
+      `FLAG{br34ch_c0mpl3t3_n0_r00t_l3ft}\n\nTemps : ${Math.floor(secs / 60)} min ${secs % 60} s   ·   Morts : ${S.deaths}\n\n` +
+      "Tu as cassé un chiffre de César, décodé du Base64,\ninjecté du SQL et exploité un robots.txt bavard.";
+    $("winScreen").classList.remove("hidden");
+  }
+
+  // ---------- boucle ----------
+  let last = performance.now(), acc = 0;
+  function loop(now) {
+    acc += Math.min(100, now - last); last = now;
+    while (acc >= 1000 / 60) {
+      if (mode === "play") {
+        step(S, {
+          left: any(K.left, held), right: any(K.right, held),
+          jump: any(K.jump, pressed), jumpHeld: any(K.jump, held), dash: any(K.dash, pressed),
+        });
+        const t = nearTerminal(S);
+        if (t && any(K.use, pressed)) openTerm(t);
+        if (toast && --toast.t <= 0) toast = null;
+      }
+      for (const k in pressed) pressed[k] = false;
+      acc -= 1000 / 60;
+    }
+    draw();
+    requestAnimationFrame(loop);
+  }
+
+  // ---------- rendu ----------
+  function draw() {
+    const p = S.p;
+    const camX = Math.max(0, Math.min(W * TILE - cv.width, p.x + PW / 2 - cv.width / 2));
+    ctx.fillStyle = "#040607"; ctx.fillRect(0, 0, cv.width, cv.height);
+
+    ctx.font = "14px monospace";
+    for (const r of rain) {
+      ctx.fillStyle = `rgba(61,255,162,${r.a})`;
+      const x = ((r.x - camX * 0.35) % (W * TILE) + W * TILE) % (W * TILE);
+      if (x < cv.width) ctx.fillText(r.c, x, (r.y + S.frames * 0.3) % (H * TILE));
+    }
+
+    ctx.save(); ctx.translate(-Math.round(camX), 0);
+    const x0 = Math.floor(camX / TILE), x1 = Math.min(W - 1, x0 + Math.ceil(cv.width / TILE) + 1);
+    for (let ty = 0; ty < H; ty++) for (let tx = x0; tx <= x1; tx++) {
+      const t = S.level.grid[ty][tx], X = tx * TILE, Y = ty * TILE;
+      if (t === "#") {
+        ctx.fillStyle = "#0c1416"; ctx.fillRect(X, Y, TILE, TILE);
+        if (!isSolid(S, tx, ty - 1)) { ctx.fillStyle = "#3DFFA2"; ctx.fillRect(X, Y, TILE, 2); }
+        ctx.strokeStyle = "rgba(61,255,162,.07)"; ctx.strokeRect(X + .5, Y + .5, TILE - 1, TILE - 1);
+      } else if (t === "F") {
+        if (!S.abilities.breach) {
+          const a = .45 + Math.sin((S.frames + ty * 7) / 6) * .2;
+          ctx.fillStyle = `rgba(255,59,92,${a})`; ctx.fillRect(X + 8, Y, 16, TILE);
+          ctx.fillStyle = "#ff3b5c"; ctx.fillRect(X + 15, Y, 2, TILE);
+        } else {
+          ctx.strokeStyle = "rgba(255,59,92,.18)"; ctx.setLineDash([4, 6]); ctx.strokeRect(X + 8, Y, 16, TILE); ctx.setLineDash([]);
+        }
+      } else if (t === "^") {
+        ctx.fillStyle = "#ff3b5c";
+        for (let i = 0; i < 4; i++) { ctx.beginPath(); ctx.moveTo(X + i * 8, Y + TILE); ctx.lineTo(X + i * 8 + 4, Y + TILE / 2); ctx.lineTo(X + i * 8 + 8, Y + TILE); ctx.fill(); }
+      }
+    }
+    // checkpoints
+    for (const c of S.level.checkpoints) {
+      const X = c.tx * TILE, Y = c.ty * TILE;
+      ctx.fillStyle = c.active ? "#3DFFA2" : "#33403c"; ctx.fillRect(X + 14, Y + 4, 4, TILE - 4);
+      ctx.fillRect(X + 18, Y + 4, 10, 8);
+    }
+    // terminaux
+    const near = nearTerminal(S);
+    for (const t of S.level.terminals) {
+      const X = t.tx * TILE, Y = t.ty * TILE, done = S.solved[t.id];
+      const col = done ? "#3DFFA2" : t.id === 4 ? "#ffcf6b" : "#7fd7ff";
+      ctx.fillStyle = "#121b1e"; ctx.fillRect(X + 2, Y + 2, 28, 22); ctx.fillRect(X + 12, Y + 24, 8, 8);
+      ctx.fillStyle = col; ctx.globalAlpha = .6 + Math.sin(S.frames / 12) * .25; ctx.fillRect(X + 5, Y + 5, 22, 16); ctx.globalAlpha = 1;
+      ctx.fillStyle = "#04120B"; ctx.font = "bold 11px monospace"; ctx.fillText(done ? "OK" : ">_", X + 9, Y + 17);
+      if (near === t && mode === "play") {
+        ctx.fillStyle = "#e8f0ec"; ctx.font = "12px monospace";
+        ctx.fillText(done ? "[E] revoir" : "[E] pirater", X - 14, Y - 8);
+      }
+    }
+    // drones
+    for (const d of S.drones) {
+      const dy = d.y + Math.sin((S.frames + d.x0) / 20) * 6;
+      ctx.fillStyle = "#ff3b5c"; ctx.fillRect(d.x, dy + 4, 24, 10);
+      ctx.fillStyle = "#2a0d13"; ctx.fillRect(d.x + 4, dy, 16, 4);
+      ctx.fillStyle = "#fff"; ctx.fillRect(d.x + (d.dir > 0 ? 16 : 4), dy + 7, 4, 4);
+    }
+    // particules
+    for (const q of S.particles) { ctx.globalAlpha = Math.min(1, q.life / 20); ctx.fillStyle = q.color; ctx.fillRect(q.x, q.y, 3, 3); }
+    ctx.globalAlpha = 1;
+    // joueur
+    if (p.dashT > 0) { ctx.fillStyle = "rgba(61,255,162,.25)"; ctx.fillRect(p.x - p.facing * 18, p.y + 4, PW, PH - 8); }
+    ctx.fillStyle = "#1b2a2e"; ctx.fillRect(p.x, p.y + 6, PW, PH - 6);          // corps
+    ctx.fillStyle = "#24363b"; ctx.fillRect(p.x - 1, p.y, PW + 2, 12);           // capuche
+    ctx.fillStyle = "#3DFFA2"; ctx.fillRect(p.x + (p.facing > 0 ? 9 : 3), p.y + 5, 8, 3); // visière
+    ctx.restore();
+
+    // HUD
+    ctx.fillStyle = "rgba(4,6,7,.75)"; ctx.fillRect(10, 10, 350, 30);
+    ctx.font = "13px monospace";
+    const ab = [["DASH", S.abilities.dash], ["DOUBLE SAUT", S.abilities.double], ["BREACH", S.abilities.breach]];
+    let hx = 20;
+    for (const [name, on] of ab) { ctx.fillStyle = on ? "#3DFFA2" : "#3a4643"; ctx.fillText((on ? "■ " : "□ ") + name, hx, 30); hx += ctx.measureText(name).width + 34; }
+    ctx.fillStyle = "rgba(4,6,7,.75)"; ctx.fillRect(cv.width - 170, 10, 160, 30);
+    ctx.fillStyle = "#7f8c87"; ctx.fillText(`terminaux ${Object.keys(S.solved).length}/4 · ✝ ${S.deaths}`, cv.width - 160, 30);
+    if (toast) {
+      ctx.fillStyle = "rgba(4,6,7,.85)"; ctx.fillRect(cv.width / 2 - 230, 60, 460, 34);
+      ctx.fillStyle = "#3DFFA2"; ctx.textAlign = "center"; ctx.fillText("Capacité débloquée : " + toast.text, cv.width / 2, 82); ctx.textAlign = "left";
+    }
+    if (S.flash > 0) { ctx.fillStyle = `rgba(255,59,92,${S.flash / 40})`; ctx.fillRect(0, 0, cv.width, cv.height); }
+  }
+
+  requestAnimationFrame(loop);
+}
+</script>
+</body>
+</html>
